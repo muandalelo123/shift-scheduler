@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shift Scheduler</title>
+  <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+  <style>
+    :root {
+      --bg: #f5f6f8; --surface: #ffffff; --border: #dde1e6; --text: #1d2430;
+      --muted: #5f6b7a; --accent: #1f4e8c; --accent-soft: #e6eef8;
+      --ok: #1e7a46; --ok-soft: #e5f4ec; --bad: #b3261e; --bad-soft: #fbeaea;
+      --warn: #8a5a00; --warn-soft: #fdf3dc;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+           background: var(--bg); color: var(--text); }
+    header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+             padding: 14px 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+    h1 { font-size: 18px; margin: 0 auto 0 0; }
+    button { font: inherit; cursor: pointer; border: 1px solid var(--border);
+             background: var(--surface); color: var(--text); border-radius: 6px; padding: 6px 12px; }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.link { border: none; background: none; padding: 0 4px; color: var(--muted); }
+    .week-label { font-weight: 600; min-width: 190px; text-align: center; }
+    main { display: grid; grid-template-columns: 1fr; gap: 16px; padding: 16px 20px; }
+    @media (min-width: 1100px) { main.with-panel { grid-template-columns: minmax(0, 1fr) 340px; } }
+    .board { display: grid; grid-template-columns: repeat(7, minmax(118px, 1fr)); gap: 8px; overflow-x: auto; }
+    .day h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+              margin: 0 0 8px; }
+    .day h2.today { color: var(--accent); }
+    .shift { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent);
+             border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; cursor: pointer; }
+    .shift.full { border-left-color: var(--ok); }
+    .shift.open { border-left-color: var(--warn); }
+    .shift.selected { outline: 2px solid var(--accent); }
+    .shift .time { font-weight: 600; }
+    .shift .meta { color: var(--muted); font-size: 12px; }
+    .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 10px;
+             background: var(--accent-soft); color: var(--accent); margin-right: 4px; }
+    .badge.open { background: var(--warn-soft); color: var(--warn); }
+    .badge.full { background: var(--ok-soft); color: var(--ok); }
+    .crew { list-style: none; padding: 0; margin: 6px 0 0; }
+    .crew li { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+    .empty { color: var(--muted); font-size: 13px; font-style: italic; }
+    aside { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px;
+            align-self: start; }
+    aside h3 { margin: 0 0 4px; font-size: 16px; }
+    .candidate { border-top: 1px solid var(--border); padding: 8px 0; }
+    .candidate .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .candidate.blocked .name { color: var(--muted); }
+    .candidate ul { margin: 4px 0 0; padding-left: 18px; color: var(--bad); font-size: 12px; }
+    .alert { padding: 10px 12px; border-radius: 8px; margin: 0 20px; }
+    .alert.error { background: var(--bad-soft); color: var(--bad); }
+    .alert.success { background: var(--ok-soft); color: var(--ok); }
+    .alert ul { margin: 4px 0 0; padding-left: 18px; }
+  </style>
+</head>
+<body>
+{% verbatim %}
+<div id="app">
+  <header>
+    <h1>Shift Scheduler</h1>
+    <button @click="moveWeek(-7)" aria-label="Previous week">‹</button>
+    <span class="week-label">Week of {{ formatDay(weekStart) }}</span>
+    <button @click="moveWeek(7)" aria-label="Next week">›</button>
+    <button @click="goToToday">Today</button>
+    <a href="/admin/">Admin</a>
+  </header>
+
+  <div v-if="message" :class="['alert', message.kind]" role="status" style="margin-top:12px">
+    {{ message.text }}
+    <ul v-if="message.items"><li v-for="item in message.items">{{ item }}</li></ul>
+  </div>
+
+  <main :class="{ 'with-panel': selectedShift }">
+    <section class="board" aria-label="Weekly schedule">
+      <div class="day" v-for="day in days" :key="day">
+        <h2 :class="{ today: day === todayKey }">{{ formatDay(day) }}</h2>
+        <div v-for="shift in shiftsByDay[day]" :key="shift.id"
+             :class="['shift', statusOf(shift), { selected: selectedShift && selectedShift.id === shift.id }]"
+             @click="selectShift(shift)">
+          <div class="time">{{ formatTime(shift.start) }} – {{ formatTime(shift.end) }}</div>
+          <div class="meta">{{ shift.station_name }} · {{ shift.duration_hours }}h</div>
+          <span class="badge" v-if="shift.required_qualification_code">{{ shift.required_qualification_code }}</span>
+          <span :class="['badge', statusOf(shift)]">{{ shift.assignments.length }}/{{ shift.slots }} filled</span>
+          <ul class="crew">
+            <li v-for="a in shift.assignments" :key="a.id">
+              {{ a.employee_name }}
+              <button class="link" @click.stop="unassign(a)" :aria-label="'Remove ' + a.employee_name">×</button>
+            </li>
+          </ul>
+        </div>
+        <p class="empty" v-if="!shiftsByDay[day] || !shiftsByDay[day].length">No shifts</p>
+      </div>
+    </section>
+
+    <aside v-if="selectedShift" aria-label="Assign staff">
+      <h3>{{ selectedShift.station_name }}</h3>
+      <p class="meta">
+        {{ formatDay(dayKey(selectedShift.start)) }}, {{ formatTime(selectedShift.start) }} – {{ formatTime(selectedShift.end) }}
+        <span v-if="selectedShift.required_qualification_code"> · requires {{ selectedShift.required_qualification_code }}</span>
+      </p>
+      <p class="empty" v-if="loadingCandidates">Checking rules…</p>
+      <div v-for="c in candidates" :key="c.employee_id" :class="['candidate', { blocked: !c.allowed }]">
+        <div class="row">
+          <span class="name">{{ c.employee_name }}</span>
+          <button class="primary" v-if="c.allowed" @click="assign(c)">Assign</button>
+        </div>
+        <ul v-if="!c.allowed"><li v-for="v in c.violations">{{ v.message }}</li></ul>
+      </div>
+      <button style="margin-top:10px" @click="selectedShift = null">Close</button>
+    </aside>
+  </main>
+</div>
+{% endverbatim %}
+
+{{ time_zone|json_script:"time-zone" }}
+<script>
+  const TIME_ZONE = JSON.parse(document.getElementById("time-zone").textContent);
+  const { createApp } = Vue;
+
+  function csrfToken() {
+    const match = document.cookie.match(/csrftoken=([^;]+)/);
+    return match ? match[1] : "";
+  }
+
+  async function api(path, options = {}) {
+    const response = await fetch(`/api/${path}`, {
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
+      ...options,
+    });
+    const body = response.status === 204 ? null : await response.json();
+    return { ok: response.ok, status: response.status, body };
+  }
+
+  // Date helpers work on "YYYY-MM-DD" keys in the agency's time zone,
+  // so a shift is shown on the day it starts locally, whatever the browser's zone.
+  const keyFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE });
+  const timeFormatter = new Intl.DateTimeFormat("en-US", { timeZone: TIME_ZONE, hour: "2-digit", minute: "2-digit", hour12: false });
+  const dayFormatter = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" });
+
+  function addDays(key, n) {
+    const d = new Date(key + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  }
+  function mondayOf(key) {
+    const weekday = (new Date(key + "T00:00:00Z").getUTCDay() + 6) % 7; // Monday = 0
+    return addDays(key, -weekday);
+  }
+
+  createApp({
+    data() {
+      const todayKey = keyFormatter.format(new Date());
+      return { todayKey, weekStart: mondayOf(todayKey), shifts: [], selectedShift: null,
+               candidates: [], loadingCandidates: false, message: null };
+    },
+    computed: {
+      days() { return Array.from({ length: 7 }, (_, i) => addDays(this.weekStart, i)); },
+      shiftsByDay() {
+        const groups = {};
+        for (const shift of this.shifts) {
+          (groups[this.dayKey(shift.start)] ||= []).push(shift);
+        }
+        return groups;
+      },
+    },
+    methods: {
+      dayKey(iso) { return keyFormatter.format(new Date(iso)); },
+      formatTime(iso) { return timeFormatter.format(new Date(iso)); },
+      formatDay(key) { return dayFormatter.format(new Date(key + "T00:00:00Z")); },
+      statusOf(shift) { return shift.assignments.length >= shift.slots ? "full" : "open"; },
+
+      async loadWeek() {
+        const { ok, body } = await api(`shifts/?week=${this.weekStart}`);
+        if (!ok) { this.message = { kind: "error", text: "Could not load the schedule." }; return; }
+        this.shifts = body;
+        if (this.selectedShift) {
+          this.selectedShift = this.shifts.find(s => s.id === this.selectedShift.id) || null;
+          if (this.selectedShift) await this.loadCandidates();
+        }
+      },
+      moveWeek(days) { this.weekStart = addDays(this.weekStart, days); this.selectedShift = null; this.loadWeek(); },
+      goToToday() { this.weekStart = mondayOf(this.todayKey); this.selectedShift = null; this.loadWeek(); },
+
+      async selectShift(shift) { this.selectedShift = shift; await this.loadCandidates(); },
+      async loadCandidates() {
+        this.loadingCandidates = true;
+        const { body } = await api(`shifts/${this.selectedShift.id}/eligible/`);
+        this.candidates = body || [];
+        this.loadingCandidates = false;
+      },
+
+      async assign(candidate) {
+        const { ok, status, body } = await api("assignments/", {
+          method: "POST",
+          body: JSON.stringify({ employee: candidate.employee_id, shift: this.selectedShift.id }),
+        });
+        if (ok) {
+          this.message = { kind: "success", text: `${candidate.employee_name} assigned.` };
+        } else if (status === 422) {
+          // Someone else may have changed the schedule since the list was loaded.
+          this.message = { kind: "error", text: "Assignment rejected:", items: body.violations.map(v => v.message) };
+        } else {
+          this.message = { kind: "error", text: "Unexpected error. Please retry." };
+        }
+        await this.loadWeek();
+      },
+
+      async unassign(assignment) {
+        const { ok } = await api(`assignments/${assignment.id}/`, { method: "DELETE" });
+        this.message = ok ? { kind: "success", text: `${assignment.employee_name} removed.` }
+                          : { kind: "error", text: "Could not remove the assignment." };
+        await this.loadWeek();
+      },
+    },
+    mounted() { this.loadWeek(); },
+  }).mount("#app");
+</script>
+</body>
+</html>

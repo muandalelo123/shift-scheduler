@@ -161,3 +161,13 @@ def test_database_rejects_shift_ending_before_start(station):
 
     with pytest.raises(IntegrityError):
         make_shift(station, at(1, 19), at(1, 7))
+
+
+# --- Messages ---------------------------------------------------------------
+
+def test_violation_messages_show_local_time_not_utc(employee, station):
+    """Regression: shift times in messages used to be printed in UTC."""
+    assign_employee(employee.pk, make_shift(station, at(1, 7), at(1, 19)).pk)
+    overlapping = make_shift(station, at(1, 12), at(1, 20))
+    message = check_assignment(employee, overlapping)[0].message
+    assert "07:00–19:00" in message

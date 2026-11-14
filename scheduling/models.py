@@ -9,6 +9,7 @@ Design notes:
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import F, Q
+from django.utils import timezone
 
 
 class Qualification(models.Model):
@@ -78,7 +79,9 @@ class Shift(models.Model):
         return (self.end - self.start).total_seconds() / 3600
 
     def __str__(self):
-        return f"{self.station} {self.start:%Y-%m-%d %H:%M}–{self.end:%H:%M}"
+        # Show local time: datetimes are stored in UTC, but schedulers think in agency time.
+        start, end = timezone.localtime(self.start), timezone.localtime(self.end)
+        return f"{self.station} {start:%Y-%m-%d %H:%M}–{end:%H:%M}"
 
 
 class Assignment(models.Model):

@@ -87,6 +87,16 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+
+LOGIN_URL = "/admin/login/"
+LOGIN_REDIRECT_URL = "/"
+
+# The API is private: only logged-in users can read or change the schedule.
+# Session authentication lets the Vue page reuse the Django login (with CSRF).
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+}
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # --- Scheduling rules -------------------------------------------------------
